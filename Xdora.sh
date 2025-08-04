@@ -20,7 +20,12 @@ dnf5 install -y \
   dolphin \
   kwrite \
   xorg-x11-server-Xorg \
-  plasma-workspace
+  plasma-workspace \
+  kde-connect \
+  kde-print-manager \
+  plasma-discover \
+  breeze-gtk \
+  kde-cli-tools
 
 echo "[3/6] Enabling graphical target and SDDM..."
 systemctl set-default graphical.target
@@ -42,25 +47,26 @@ EOF
 # Optional: set neutral Plymouth boot splash
 plymouth-set-default-theme -R details
 
-echo "[6/6] Removing unneeded KDE bloat..."
+echo "[6/6] Removing unneeded KDE/GUI bloat (but keeping print/connect/discover)..."
 dnf5 remove -y \
   libreoffice* \
   akonadi* \
   kmail* \
   korganizer* \
   kontact* \
-#  plasma-discover* \
   calligra* \
   elisa-player \
   dragonplayer \
   firefox \
- # kde-connect \
   kamoso \
   kwalletmanager \
-  kget \
-#  kde-print-manager || true
+  kget || true
 
 dnf5 autoremove -y
 dnf5 clean all
 
-echo "✅ Done! Reboot and enjoy your minimal, debranded KDE Plasma."
+echo "[7/7] Setting Breeze Dark theme for Plasma..."
+# Ensure the command is available and theme is installed
+sudo -u $(logname) plasma-apply-lookandfeel -a org.kde.breezedark.desktop || echo "⚠️ Unable to apply theme – may need first login."
+
+echo "✅ Done! Reboot and enjoy your minimal KDE with Breeze Dark, KDE Connect, Print, and Discover."
