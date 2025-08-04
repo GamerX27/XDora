@@ -13,7 +13,7 @@ echo "[1/6] Updating base system..."
 dnf5 upgrade -y
 
 echo "[2/6] Installing KDE Plasma Desktop with most features..."
-dnf5 group install -y "KDE Plasma Workspaces"
+dnf5 group install -y "KDE Plasma Desktop"
 dnf5 install -y \
   sddm \
   konsole \
