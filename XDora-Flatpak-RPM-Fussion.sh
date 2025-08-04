@@ -26,88 +26,26 @@ fi
 echo "✅ Flatpak configured."
 
 ###############################################################################
-# 2. RPM Fusion – Free & Non-Free, Fully Enabled (DNF5-safe)
+# 2. RPM Fusion – Free & Non-Free
 ###############################################################################
 echo "📦 Setting up RPM Fusion..."
-
 FEDORA_REL=$(rpm -E %fedora)
 
 $SUDO dnf -y install \
   "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_REL}.noarch.rpm" \
   "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_REL}.noarch.rpm"
 
-echo "🔄 Refreshing metadata..."
 $SUDO dnf clean all
 $SUDO dnf makecache
 
-ENABLED_REPOS=(
-  rpmfusion-free
-  rpmfusion-free-updates
-  rpmfusion-nonfree
-  rpmfusion-nonfree-updates
-)
-
-for repo in "${ENABLED_REPOS[@]}"; do
-  if ! dnf repolist enabled | grep -q "^$repo"; then
-    echo "✅ Enabling $repo..."
-    $SUDO dnf config-manager enable "$repo"
-  else
-    echo "✔️  $repo already enabled"
-  fi
-done
-
-echo "✅ RPM Fusion fully configured."
-
 ###############################################################################
-# 3. Multimedia Enhancements – try group, fallback to manual
+# 3. Multimedia – YOUR FIX
 ###############################################################################
-echo "🎧 Installing multimedia stack..."
+echo "🎧 Installing multimedia support using your instructions..."
 
-if dnf group info multimedia &>/dev/null; then
-  echo "🧩 Installing multimedia group via DNF..."
-  if ! $SUDO dnf -y group install "Multimedia" \
-      --setopt=install_weak_deps=False \
-      --exclude=PackageKit-gstreamer-plugin; then
-    echo "⚠️ Group install failed. Falling back to manual packages..."
-  fi
-fi
-
-MULTIMEDIA_PACKAGES=(
-  ffmpeg
-  gstreamer1-plugins-good
-  gstreamer1-plugins-bad-free
-  gstreamer1-plugins-ugly
-  gstreamer1-plugins-base
-  gstreamer1-libav
-  lame
-  x264
-  x265
-  libheif-freeworld
-  pipewire-codec-aptx
-  libva-utils
-  vdpauinfo
-  vainfo
-)
-
-AVAILABLE=()
-
-for pkg in "${MULTIMEDIA_PACKAGES[@]}"; do
-  if dnf list --quiet --available "$pkg" &>/dev/null; then
-    AVAILABLE+=("$pkg")
-  else
-    echo "⚠️  Skipping unavailable package: $pkg"
-  fi
-done
-
-if [[ ${#AVAILABLE[@]} -gt 0 ]]; then
-  echo "📦 Installing available multimedia packages..."
-  $SUDO dnf -y install "${AVAILABLE[@]}"
-else
-  echo "ℹ️ No multimedia packages to install — all unavailable or already present."
-fi
-
-echo "🎞️ Swapping ffmpeg-free → full ffmpeg..."
-$SUDO dnf -y swap ffmpeg-free ffmpeg --allowerasing || echo "ℹ️ Swap skipped or already done."
+$SUDO dnf4 group install multimedia
+$SUDO dnf swap 'ffmpeg-free' 'ffmpeg' --allowerasing
+$SUDO dnf group install -y sound-and-video
 
 ###############################################################################
 # 4. Cisco OpenH264 – Codec Repo
@@ -129,7 +67,7 @@ $SUDO dnf -y update @core
 $SUDO dnf -y update --refresh
 
 ###############################################################################
-# 6. Hardware Acceleration – Intel / AMD / Skip
+# 6. GPU Acceleration – Intel / AMD / Skip
 ###############################################################################
 echo
 echo "🖥️ GPU Acceleration Setup:"
@@ -141,7 +79,7 @@ read -rp "Select your GPU type (1/2/3): " GPU_CHOICE
 case "$GPU_CHOICE" in
   1)
     echo "Intel GPU selected."
-    echo "  a) New Intel GPU (Broadwell+, Gen8+, e.g. Skylake, Tiger Lake)"
+    echo "  a) New Intel GPU (Broadwell+, Gen8+)"
     echo "  b) Old Intel GPU (Ivy Bridge, Haswell)"
     read -rp "Select Intel driver type (a/b): " INTEL_TYPE
 
@@ -178,4 +116,4 @@ esac
 ###############################################################################
 echo
 echo "✅ Fedora Desktop setup complete!"
-echo "You may want to reboot for all changes to apply."
+echo "🔁 Reboot recommended."
