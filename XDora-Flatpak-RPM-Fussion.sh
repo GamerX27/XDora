@@ -1,161 +1,135 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_NAME="$(basename "$0")"
-FEDORA_VER="$(rpm -E %fedora)"
-DNF5_CMD="$(command -v dnf5 || true)"
-DNF4_CMD="$(command -v dnf4 || true)"
+FEDORA_VERSION=$(rpm -E %fedora)
 
-log()   { echo -n "[$SCRIPT_NAME] "; echo "$*"; }
-die()   { echo "ERROR: $*"; exit 1; }
-warn()  { echo "WARNING: $*"; }
-info()  { echo "# $*"; }
+log() { echo -e "\033[1;32m[XDora]\033[0m $*"; }
+warn() { echo -e "\033[1;33m[WARNING]\033[0m $*"; }
+error() { echo -e "\033[1;31m[ERROR]\033[0m $*"; }
 
-check_root_or_sudo() {
-  if [ "$(id -u)" -ne 0 ] && ! command -v sudo >/dev/null; then
-    die "This script requires either root or sudo. Run as 'sudo $0' or as root."
+check_root() {
+  if [[ "$EUID" -ne 0 ]]; then
+    error "Please run this script as root or with sudo."
+    exit 1
   fi
 }
 
-# Install RPM Fusion repos if not already
-setup_rpmfusion() {
-  info "Step 1: Enabling RPM Fusion Free and Non‑Free repositories…"
-  REPOURL_BASE="https://download1.rpmfusion.org"
-  sudo dnf install -y \
-    "${REPOURL_BASE}/free/fedora/rpmfusion-free-release-${FEDORA_VER}.noarch.rpm" \
-    "${REPOURL_BASE}/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm" \
-  && log "RPM Fusion repos enabled." || warn "Could not install RPM Fusion launchers; maybe already present."
-  sudo dnf makecache || warn "Could not repolist; continuing anyway."
+install_rpmfusion() {
+  log "Enabling RPM Fusion repositories..."
+  dnf install -y \
+    "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VERSION}.noarch.rpm" \
+    "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VERSION}.noarch.rpm"
 }
 
-# Install multimedia, swap codecs & handle group bug
-install_multimedia_codec_stack() {
-  info "Step 2: Installing multimedia codecs, handling DNF 5 group ignore bug…"
-  UTIL="${DNF5_CMD:-dnf}"
-  log "Primary pkg manager: $UTIL"  
-  # Swap ffmpeg
-  sudo $UTIL swap -y ffmpeg-free ffmpeg --allowerasing
-  CODECS=(libavcodec-freeworld ffmpeg-libs \
-          gstreamer1-plugins-{bad,good,base} \
-          gstreamer1-plugin-openh264 \
-          gstreamer1-libav \
-          lame*) || true
-  log "Installing essential codecs: ${CODECS[*]}"
-  sudo $UTIL install -y "${CODECS[@]}" || true
+install_multimedia_codecs() {
+  log "Installing multimedia codecs from RPM Fusion..."
 
-  GROUPS=("multimedia" "sound-and-video")
-  for grp in "${GROUPS[@]}"; do
-    log "Attempt group update: $grp"
-    if [ -n "$DNF4_CMD" ] && $UTIL group info "$grp" | grep -q 'Packages$$'; then
-      log "DNF5 ignoring this group's RPM Fusion extras—using dnf4 fallback"
-      sudo dnf4 group upgrade --with-optional "$grp" -y \
-        --setopt="install_weak_deps=False" \
-        --exclude=PackageKit-gstreamer-plugin || true
-    else
-      sudo $UTIL group upgrade --with-optional "$grp" -y \
-        --setopt="install_weak_deps=False" \
-        --exclude=PackageKit-gstreamer-plugin || true
-    fi
-  done
+  # Swap ffmpeg-free with full ffmpeg
+  dnf swap -y ffmpeg-free ffmpeg --allowerasing
 
-  log "Dummy pause to flush caches…"
-  sudo $UTIL clean expire-cache || true
+  # Install recommended codecs
+  dnf install -y \
+    libavcodec-freeworld \
+    gstreamer1-plugins-bad-freeworld \
+    gstreamer1-plugins-ugly-freeworld \
+    gstreamer1-plugin-openh264 \
+    lame\* \
+    gstreamer1-plugins-base \
+    gstreamer1-plugins-good \
+    gstreamer1-libav \
+    ffmpeg-libs || warn "Some codecs may already be installed or unavailable."
 }
 
-# Detect GPU and install VA‑API hardware driver
-install_hardware_accel_driver() {
-  info "Step 3: Installing VA‑API hardware-accelerated driver (only if needed)…"
-  sudo dnf install -y libva libva-utils --setopt=clean_requirements_on_remove=1 || true
+install_vaapi_drivers() {
+  log "Detecting GPU and installing VA-API hardware acceleration drivers..."
 
-  GPU_LINE="$(lspci | grep -i "3D controller\|VGA" | head -n1 || :)"
-  CPU_LINE="$(awk 'NR==1 && /model name/ {print tolower($0)}' /proc/cpuinfo || :)"
-  log "Detected hardware: lspci: '$GPU_LINE'; cpuinfo: '$CPU_LINE'"
+  dnf install -y libva libva-utils
 
-  if grep -qi intel <<< "$GPU_LINE" || grep -qi intel <<< "$CPU_LINE"; then
-    if grep -Eq "i[3456789]-[56789]" <<< "$CPU_LINE"; then
-      log "Intel Broadwell+ detected → installing intel‑media‑driver (iHD)"
-      sudo dnf install -y intel-media-driver libva-intel-driver
-      export LIBVA_DRIVER_NAME=iHD
+  GPU_INFO=$(lspci | grep -Ei 'VGA|3D')
+  if echo "$GPU_INFO" | grep -qi 'intel'; then
+    log "Intel GPU detected."
+
+    CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo)
+    if echo "$CPU_MODEL" | grep -Eiq 'i[5-9]|xeon|core'; then
+      log "Installing intel-media-driver (iHD)..."
+      dnf install -y intel-media-driver libva-intel-driver
     else
-      log "Intel older GPU detected → installing i965/libva‑intel‑driver"
-      sudo dnf install -y libva-intel-driver
+      log "Installing legacy Intel VA-API driver..."
+      dnf install -y libva-intel-driver
     fi
 
-  elif grep -qi amd <<< "$GPU_LINE"; then
-    log "AMD GPU detected → swapping to mesa-va-drivers-freeworld & vdpau"
-    sudo dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld --allowerasing || true
-    sudo dnf swap -y mesa-vdpau-drivers mesa-vdpau-drivers-freeworld --allowerasing || true
-    sudo dnf swap -y mesa-va-drivers.i686 mesa-va-drivers-freeworld.i686 --allowerasing || true
-    sudo dnf swap -y mesa-vdpau-drivers.i686 mesa-vdpau-drivers-freeworld.i686 --allowerasing || true
+  elif echo "$GPU_INFO" | grep -qi 'amd'; then
+    log "AMD GPU detected. Swapping to freeworld VAAPI drivers..."
+    dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld --allowerasing
+    dnf swap -y mesa-vdpau-drivers mesa-vdpau-drivers-freeworld --allowerasing
+    dnf swap -y mesa-va-drivers.i686 mesa-va-drivers-freeworld.i686 --allowerasing
+    dnf swap -y mesa-vdpau-drivers.i686 mesa-vdpau-drivers-freeworld.i686 --allowerasing
 
-  elif grep -qi nvidia <<< "$GPU_LINE"; then
-    log "NVIDIA GPU detected → installing libva‑nvidia‑driver"
-    sudo dnf install -y libva-nvidia-driver
+  elif echo "$GPU_INFO" | grep -qi 'nvidia'; then
+    log "NVIDIA GPU detected. Installing VAAPI bridge..."
+    dnf install -y libva-nvidia-driver
 
   else
-    log "No Intel/AMD/NVIDIA GPU found → skipping VA‑API hardware drivers."
+    warn "No supported GPU detected. Skipping VA-API driver installation."
   fi
 }
 
-# Uninstall Fedora Remote Flatpaks, block future additions, add Flathub
-install_flatpak_and_block_fedora() {
-  info "Step 4: Removing Fedora Flatpak remote, blocking it, and enforcing Flathub only."
-  if ! command -v flatpak >/dev/null; then
-    warn "flatpak is not installed; skipping Flatpak management."
-    return
+setup_flatpak_and_block_fedora() {
+  log "Configuring Flatpak and removing Fedora remote..."
+
+  # Install Flatpak if not present
+  if ! command -v flatpak &>/dev/null; then
+    log "Flatpak not found. Installing..."
+    dnf install -y flatpak
   fi
 
-  REMOTES_SYS="$(flatpak remote-list --system --columns=name)"
-  echo "$REMOTES_SYS" | grep -qx fedora && {
-    APPS="$(flatpak list --columns=application,remote | awk '$2=="fedora" {print $1}' || true)"
-    log "Bulk removing all Fedora Remote apps: $APPS"
-    for app in $APPS; do
-      sudo flatpak uninstall --system --delete-data -y "$app"
+  # Remove Fedora remote and apps (system)
+  if flatpak remotes --system | grep -q "^fedora"; then
+    log "Removing system Fedora Flatpak apps..."
+    flatpak list --system --app --columns=application,remote | awk '$2=="fedora"{print $1}' | while read -r app; do
+      flatpak uninstall --system --delete-data -y "$app"
     done
-    log "Removing fedora remote from system flatpaks"
-    sudo flatpak remote-delete --system --if-exists fedora
-  }
+    flatpak remote-delete --system fedora
+  fi
 
-  flatpak remote-list --user --columns=name | grep -qx fedora && {
-    U_APPS="$(flatpak list --user --columns=application,remote | awk '$2=="fedora" {print $1}' || true)"
-    log "Removing (user) Fedora Remote apps: $U_APPS"
-    for app in $U_APPS; do
+  # Remove Fedora remote and apps (user)
+  if flatpak remotes --user | grep -q "^fedora"; then
+    log "Removing user Fedora Flatpak apps..."
+    flatpak list --user --app --columns=application,remote | awk '$2=="fedora"{print $1}' | while read -r app; do
       flatpak uninstall --user --delete-data -y "$app"
     done
-    log "Deleting the user-level Fedora remote"
-    flatpak remote-delete --user --if-exists fedora
-  }
+    flatpak remote-delete --user fedora
+  fi
 
-  log "Adding or re-enabling Flathub remote"
-  flatpak remote-list --system | grep -qx flathub \
-    && sudo flatpak remote-modify --system --no-filter --enable flathub \
-    || sudo flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+  # Add Flathub
+  if ! flatpak remotes | grep -q "^flathub"; then
+    log "Adding Flathub Flatpak remote..."
+    flatpak remote-add --if-not-exists --system flathub https://flathub.org/repo/flathub.flatpakrepo
+  else
+    log "Flathub is already added."
+  fi
 
-  BLOCK_FILE="/etc/flatpak/remotes.d/90-block-fedora.repo"
-  log "Writing $BLOCK_FILE to prevent re-creation of Fedora remote"
-  sudo tee "$BLOCK_FILE" >/dev/null <<EOF
-[Remote "fedora"]
-Name = Fedora (blocked)
-Enabled = false
-Url = https://registry.fedoraproject.org/
+  # Block Fedora remote from being re-added
+  BLOCK_FILE="/etc/flatpak/remotes.d/99-block-fedora.repo"
+  log "Blocking Fedora Flatpak remote..."
+  mkdir -p /etc/flatpak/remotes.d
+  tee "$BLOCK_FILE" >/dev/null <<EOF
+[remote-fedora]
+Name=Blocked Fedora Remote
+Enabled=false
+Url=https://registry.fedoraproject.org/
 EOF
-  sudo chmod 644 "$BLOCK_FILE"
-  log "Fedora remote is now disabled and blocked. Flathub only."
+  chmod 644 "$BLOCK_FILE"
+  log "Fedora Flatpak remote has been blocked."
 }
 
 main() {
-  check_root_or_sudo
-  [ "$FEDORA_VER" -lt 40 ] && die "This script only supports Fedora 40 or newer."
-
-  setup_rpmfusion
-  install_multimedia_codec_stack
-  install_hardware_accel_driver
-  install_flatpak_and_block_fedora
-
-  info "🎉 Finished all tasks. You may want to reboot to fully activate VA‑API."
-  echo "You can verify HW decoding by running (after reboot):"
-  echo "  LIBVA_DRIVER_NAME=${LIBVA_DRIVER_NAME:-auto} vainfo"
+  check_root
+  install_rpmfusion
+  install_multimedia_codecs
+  install_vaapi_drivers
+  setup_flatpak_and_block_fedora
+  log "✅ All done. You may want to reboot for all changes to take full effect."
 }
 
-# Run main
 main "$@"
