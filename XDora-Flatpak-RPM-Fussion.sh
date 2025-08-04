@@ -1,172 +1,74 @@
-#!/bin/bash
+install_multimedia_codecs() {
+  echo "→ Enabling RPM Fusion multimedia & codec packages (Fedora 40+ / DNF 5)"
 
-# Script for XDora - Fedora-like Distro
+  # Detect whether DNF 5 or older is installed, and set wrapper
+  # (Fedora 40+ includes dnf5 and symlinks /usr/bin/dnf to dnf5)
+  if command -v dnf5 >/dev/null 2>&1; then
+    PKGMGR="dnf5"
+  else
+    PKGMGR="dnf"
+  fi
+  echo "Using pkg manager: $PKGMGR"
 
-# Function to remove Fedora's Flatpak packages
-remove_fedora_flatpaks() {
-    echo "Removing Fedora's Flatpak packages..."
+  # Helper: run DNF group commands—fallback to dnf4 if available
+  group_update() {
+    GROUP="$1"
+    echo "Upgrading Fedora group '$GROUP' (${PKGMGR})"
+    sudo $PKGMGR group upgrade -y "$GROUP" --with-optional --allowerasing || {
+      if command -v dnf4 >/dev/null; then
+        echo "DNF5 didn’t include RPM‑Fusion extras—falling back to dnf4 for group '$GROUP'"
+        sudo dnf4 group upgrade -y "$GROUP" --with-optional --allowerasing
+      else
+        echo "Failed to update group '$GROUP' with dnf5 and no dnf4 available" >&2
+      fi
+    }
+  }
 
-    # List all Flatpak applications installed
-    flatpak list --app | while read app; do
-        echo "Removing Flatpak application: $app"
-        flatpak uninstall -y $app
-    done
+  sudo $PKGMGR update --refresh -y
+
+  # Swap base Fedora ffmpeg-free for full RPM‑Fusion ffmpeg
+  sudo $PKGMGR swap -y ffmpeg-free ffmpeg --allowerasing
+
+  # Update Fedora-defined @multimedia and @sound‑and‑video groups,
+  # but manually add RPM‑Fusion extras since dnf5 may ignore them
+  group_update multimedia
+  group_update "sound‑and‑video"
+
+  # RPM‑Fusion specific extras that Fedora’s group may omit under dnf5
+  EXTRA_RPMFUSION=(
+    libavcodec‑freeworld
+    gstreamer1‑plugins‑bad‑freeworld
+    gstreamer1‑plugins‑ugly‑freeworld
+    ffmpeg‑full
+    pipewire‑codec‑aptx
+  )
+  echo "Installing RPM‑Fusion codec extras (if needed): ${EXTRA_RPMFUSION[*]}"
+  sudo $PKGMGR install -y "${EXTRA_RPMFUSION[@]}" || {
+    # on i386/x86_64, also try installing .i686 variants
+    sudo $PKGMGR install -y "${EXTRA_RPMFUSION[@]/%/.i686}" || true
+  }
+
+  # VA‑API / hardware‑acceleration support
+  echo "Installing VA‑API hardware‑accel packages"
+  sudo $PKGMGR install -y libva libva-utils ffmpeg-libs
+
+  if lspci | grep -iq "Intel.*HD.*Graphics"; then
+    echo "Detected Intel GPU → installing media‑driver"
+    sudo $PKGMGR swap -y libva-intel-media-driver intel-media-driver --allowerasing
+    sudo $PKGMGR install -y libva-intel-driver
+  elif lspci | grep -iq "AMD"; then
+    echo "Detected AMD GPU → swapping to freeworld mesa‑va/drivers"
+    sudo $PKGMGR swap -y mesa-va-drivers mesa-va-drivers-freeworld --allowerasing
+    sudo $PKGMGR swap -y mesa-vdpau-drivers mesa-vdpau-drivers-freeworld --allowerasing
+    sudo $PKGMGR swap -y mesa-va-drivers.i686 mesa-va-drivers-freeworld.i686 --allowerasing
+    sudo $PKGMGR swap -y mesa-vdpau-drivers.i686 mesa-vdpau-drivers-freeworld.i686 --allowerasing
+  else
+    echo "No Intel/AMD GPU detected—assuming either VM or unsupported hardware"
+  fi
+
+  echo "Installing OpenH264 support"
+  sudo $PKGMGR install -y openh264 gstreamer1-plugin-openh264 mozilla-openh264
+  sudo $PKGMGR config-manager --setopt=fedora-cisco-openh264.enabled=1
+
+  echo "Multimedia & codec setup complete."
 }
-
-# Function to add Flathub repository
-add_flathub_repo() {
-    echo "Adding Flathub repository to Flatpak..."
-    
-    # Check if Flathub is already added
-    if ! flatpak remotes | grep -q flathub; then
-        flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-        echo "Flathub added successfully!"
-    else
-        echo "Flathub is already added."
-    fi
-}
-
-# Function to check if Plasma Discover is installed
-check_plasma_discover() {
-    echo "Checking if Plasma Discover is installed..."
-
-    # Check if Plasma Discover is installed
-    if ! command -v plasma-discover &> /dev/null; then
-        echo "Plasma Discover is not installed. Installing..."
-        sudo dnf install -y plasma-discover
-    else
-        echo "Plasma Discover is already installed."
-    fi
-}
-
-# Function to enable RPM Fusion repositories
-enable_rpmfusion() {
-    echo "Enabling RPM Fusion repositories..."
-
-    # Install RPM Fusion free and nonfree repositories
-    sudo dnf install -y \
-    https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
-    https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
-
-    # Enable the openh264 library on Fedora 41 and later
-    if [ "$(rpm -E %fedora)" -ge 41 ]; then
-        echo "Enabling Cisco OpenH264 repository..."
-        sudo dnf config-manager setopt fedora-cisco-openh264.enabled=1
-
-        # Install rpmfusion-appstream-data explicitly for Fedora 41 and later
-        echo "Installing rpmfusion-appstream-data packages..."
-        sudo dnf install -y rpmfusion-\*-appstream-data
-    fi
-}
-
-# Function to switch to full FFmpeg and install multimedia codecs
-switch_to_full_ffmpeg_and_install_codecs() {
-    echo ""
-    echo "Switching to full FFmpeg provided by RPM Fusion..."
-
-    # Remove the conflicting libswscale-free package (if any)
-    sudo dnf remove -y libswscale-free
-
-    # Swap the free version of FFmpeg with the non-free version and update multimedia packages
-    sudo dnf swap ffmpeg-free ffmpeg --allowerasing
-
-    # Install the multimedia plugins for GStreamer and other multimedia applications
-    echo "Installing multimedia codecs and plugins..."
-
-    # Install individual multimedia packages
-    sudo dnf install -y \
-    gstreamer1-plugins-good \
-    gstreamer1-plugins-bad-freeworld \
-    gstreamer1-plugins-ugly-freeworld \
-    gstreamer1-libav \
-    ffmpeg \
-    libdvdcss
-
-    echo "Proprietary FFmpeg and multimedia packages have been installed/updated."
-}
-
-# Function to check if the user has an Intel iGPU or AMD APU/GPU
-ask_for_gpu() {
-    echo ""
-    read -p "Do you have an Intel integrated GPU (iGPU) or an AMD APU/GPU? (intel/amd): " gpu_type
-
-    if [[ "$gpu_type" == "intel" || "$gpu_type" == "Intel" ]]; then
-        echo "Installing drivers for Intel iGPU..."
-        
-        # Check if the Intel processor is 6th generation or later
-        read -p "Is your Intel processor 6th generation or later? (y/n): " intel_gen
-        if [[ "$intel_gen" == "y" || "$intel_gen" == "Y" ]]; then
-            echo "Installing intel-media-driver for newer Intel iGPU (6th gen or later)..."
-            sudo dnf install -y intel-media-driver
-        else
-            echo "Installing libva-intel-driver for older Intel iGPU..."
-            sudo dnf install -y libva-intel-driver
-        fi
-
-    elif [[ "$gpu_type" == "amd" || "$gpu_type" == "AMD" ]]; then
-        echo "Installing AMD APU/GPU drivers..."
-
-        # Install AMD drivers and enable better support
-        sudo dnf install -y xorg-x11-drv-amdgpu
-        
-        # Swap Mesa VA and VDPAU drivers for better AMD support
-        echo "Swapping Mesa VA and VDPAU drivers for better AMD support..."
-        sudo dnf swap mesa-va-drivers mesa-va-drivers-freeworld --allowerasing
-        sudo dnf swap mesa-vdpau-drivers mesa-vdpau-drivers-freeworld --allowerasing
-        sudo dnf swap mesa-va-drivers.i686 mesa-va-drivers-freeworld.i686 --allowerasing
-        sudo dnf swap mesa-vdpau-drivers.i686 mesa-vdpau-drivers-freeworld.i686 --allowerasing
-
-    else
-        echo "Invalid GPU type. Please choose either 'intel' or 'amd'."
-    fi
-}
-
-# Function to detect if the system is running in a VM
-detect_vm() {
-    echo "Checking if the system is running in a virtual machine..."
-    
-    # Check for the presence of VM indicators in lscpu output or dmesg
-    if lscpu | grep -iE "hypervisor|vmware|virtualbox|qemu" &> /dev/null; then
-        echo "The system appears to be running in a virtual machine."
-        return 0
-    else
-        echo "The system does not appear to be in a virtual machine."
-        return 1
-    fi
-}
-
-# Main function
-main() {
-    # First, enable RPM Fusion repositories
-    enable_rpmfusion
-
-    # Detect if the system is running in a VM
-    detect_vm
-    is_vm=$?
-
-    if [[ $is_vm -eq 0 ]]; then
-        echo "Skipping hardware-accelerated codec installations since this is a virtual machine."
-    fi
-
-    # Remove Fedora's Flatpaks
-    remove_fedora_flatpaks
-
-    # Add Flathub repository
-    add_flathub_repo
-
-    # Check for Plasma Discover
-    check_plasma_discover
-
-    # Switch to full FFmpeg and install multimedia codecs
-    switch_to_full_ffmpeg_and_install_codecs
-
-    # Ask user for Intel iGPU or AMD APU/GPU information
-    if [[ $is_vm -eq 1 ]]; then  # Only ask for GPU if it's not a VM
-        ask_for_gpu
-    fi
-
-    echo "XDora setup complete!"
-}
-
-# Run the main function
-main
