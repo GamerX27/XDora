@@ -8,11 +8,11 @@ curl -fsS https://dl.brave.com/install.sh | sh
 
 # Update package index
 echo "Updating package index..."
-sudo apt update
+sudo dnf update
 
 # Install VLC, Fastfetch, and Fish
 echo "Installing VLC, Fastfetch, and Fish shell..."
-sudo apt install -y vlc fastfetch fish
+sudo dnf install -y vlc fastfetch fish
 
 # Set Fish as default shell
 echo "Setting Fish as default shell..."
