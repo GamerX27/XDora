@@ -1,74 +1,58 @@
-install_multimedia_codecs() {
-  echo "→ Enabling RPM Fusion multimedia & codec packages (Fedora 40+ / DNF 5)"
+install_flatpak_and_block_fedora() {
+  echo "🚫 Managing Flatpak: removing Fedora Remote, enforcing Flathub, blocking future use."
 
-  # Detect whether DNF 5 or older is installed, and set wrapper
-  # (Fedora 40+ includes dnf5 and symlinks /usr/bin/dnf to dnf5)
-  if command -v dnf5 >/dev/null 2>&1; then
-    PKGMGR="dnf5"
-  else
-    PKGMGR="dnf"
-  fi
-  echo "Using pkg manager: $PKGMGR"
-
-  # Helper: run DNF group commands—fallback to dnf4 if available
-  group_update() {
-    GROUP="$1"
-    echo "Upgrading Fedora group '$GROUP' (${PKGMGR})"
-    sudo $PKGMGR group upgrade -y "$GROUP" --with-optional --allowerasing || {
-      if command -v dnf4 >/dev/null; then
-        echo "DNF5 didn’t include RPM‑Fusion extras—falling back to dnf4 for group '$GROUP'"
-        sudo dnf4 group upgrade -y "$GROUP" --with-optional --allowerasing
-      else
-        echo "Failed to update group '$GROUP' with dnf5 and no dnf4 available" >&2
-      fi
-    }
-  }
-
-  sudo $PKGMGR update --refresh -y
-
-  # Swap base Fedora ffmpeg-free for full RPM‑Fusion ffmpeg
-  sudo $PKGMGR swap -y ffmpeg-free ffmpeg --allowerasing
-
-  # Update Fedora-defined @multimedia and @sound‑and‑video groups,
-  # but manually add RPM‑Fusion extras since dnf5 may ignore them
-  group_update multimedia
-  group_update "sound‑and‑video"
-
-  # RPM‑Fusion specific extras that Fedora’s group may omit under dnf5
-  EXTRA_RPMFUSION=(
-    libavcodec‑freeworld
-    gstreamer1‑plugins‑bad‑freeworld
-    gstreamer1‑plugins‑ugly‑freeworld
-    ffmpeg‑full
-    pipewire‑codec‑aptx
-  )
-  echo "Installing RPM‑Fusion codec extras (if needed): ${EXTRA_RPMFUSION[*]}"
-  sudo $PKGMGR install -y "${EXTRA_RPMFUSION[@]}" || {
-    # on i386/x86_64, also try installing .i686 variants
-    sudo $PKGMGR install -y "${EXTRA_RPMFUSION[@]/%/.i686}" || true
-  }
-
-  # VA‑API / hardware‑acceleration support
-  echo "Installing VA‑API hardware‑accel packages"
-  sudo $PKGMGR install -y libva libva-utils ffmpeg-libs
-
-  if lspci | grep -iq "Intel.*HD.*Graphics"; then
-    echo "Detected Intel GPU → installing media‑driver"
-    sudo $PKGMGR swap -y libva-intel-media-driver intel-media-driver --allowerasing
-    sudo $PKGMGR install -y libva-intel-driver
-  elif lspci | grep -iq "AMD"; then
-    echo "Detected AMD GPU → swapping to freeworld mesa‑va/drivers"
-    sudo $PKGMGR swap -y mesa-va-drivers mesa-va-drivers-freeworld --allowerasing
-    sudo $PKGMGR swap -y mesa-vdpau-drivers mesa-vdpau-drivers-freeworld --allowerasing
-    sudo $PKGMGR swap -y mesa-va-drivers.i686 mesa-va-drivers-freeworld.i686 --allowerasing
-    sudo $PKGMGR swap -y mesa-vdpau-drivers.i686 mesa-vdpau-drivers-freeworld.i686 --allowerasing
-  else
-    echo "No Intel/AMD GPU detected—assuming either VM or unsupported hardware"
+  # 0. Check if flatpak is installed; skip if not
+  if ! command -v flatpak >/dev/null 2>&1; then
+    echo "• Flatpak is not installed. Skipping Flatpak configuration."
+    return
   fi
 
-  echo "Installing OpenH264 support"
-  sudo $PKGMGR install -y openh264 gstreamer1-plugin-openh264 mozilla-openh264
-  sudo $PKGMGR config-manager --setopt=fedora-cisco-openh264.enabled=1
+  # 1. Remove any flatpak apps using the 'fedora' remote
+  echo "• Removing all Flatpak apps installed from Fedora remote (if any)."
+  flatpak list --app --columns=application,remote | grep -E "\s+fedora\$" | \
+    awk '{print $1}' | \
+    while read -r app; do
+      echo "  • Uninstalling $app from Fedora remote"
+      sudo flatpak uninstall --system --delete-data -y "$app"
+    done
 
-  echo "Multimedia & codec setup complete."
+  # 2. Remove the Fedora remote entirely
+  echo "• Deleting Fedora remote to prevent future installs."
+  sudo flatpak remote-delete --system --if-exists fedora
+
+  # 3. Add Flathub (if missing) and ensure it's enabled
+  echo "• Adding Flathub remote (or re-enabling if present but disabled)."
+  if flatpak remote-list --system | grep -q "^flathub\s"; then
+    sudo flatpak remote-modify --system --no-filter --enable flathub || true
+    echo "  → Flathub already exists; enabled."
+  else
+    sudo flatpak remote-add --system --if-not-exists flathub \
+      https://dl.flathub.org/repo/flathub.flatpakrepo
+    echo "  → Flathub added."
+  fi
+
+  # 4. Optional: for user installations, repeat using --user
+  # (especially useful for pre-existing Dew desktop)
+  flatpak remote-list --user | grep -q "^fedora\s" && {
+    flatpak list --user --app --columns=application,remote | grep -E "\s+fedora\$" | \
+      awk '{print $1}' | \
+      while read -r app; do
+        echo "  • Removing user-$app from Fedora remote"
+        flatpak uninstall --user --delete-data -y "$app"
+      done
+    flatpak remote-delete --user --if-exists fedora
+  }
+
+  # 5. Block Fedora remote from ever being re-added (static remotes override)
+  echo "• Preventing re-addition of Fedora remote"
+  local blockfile="/etc/flatpak/remotes.d/90-disable-fedora.repo"
+  sudo sh -c "cat > '$blockfile'" <<EOF
+[remote-fedora]
+Name=Blocked: Fedora Flatpak remote
+Enabled=false
+Url=https://registry.fedoraproject.org/
+EOF
+  sudo chmod 644 "$blockfile"
+
+  echo "✅ Flatpak now uses Flathub only, Fedora remote is disabled (blocked)."
 }
