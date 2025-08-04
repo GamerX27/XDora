@@ -44,7 +44,7 @@ $SUDO dnf makecache
 echo "🎧 Installing multimedia support using your instructions..."
 
 $SUDO dnf4 group install multimedia -y
-$SUDO dnf swap 'ffmpeg-free' 'ffmpeg' --allowerasing
+$SUDO dnf swap 'ffmpeg-free' 'ffmpeg' --allowerasing .y
 $SUDO dnf group install -y sound-and-video
 
 ###############################################################################
