@@ -1,116 +1,71 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FEDORA_VER=$(rpm -E %fedora)
+#---------- helpers -----------------------------------------------------------
+msg() { printf '\e[1;32m==>\e[0m %s\n' "$*"; }
+die() { printf '\e[1;31m!!\e[0m %s\n' "$*" ; exit 1; }
 
-log() { echo "[XDora] $*"; }
-warn() { echo "[WARNING] $*"; }
+need_cmd() { command -v "$1" &>/dev/null || die "Required cmd '$1' not found."; }
+need_cmd dnf
+need_cmd flatpak
+need_cmd lspci
 
-# 1. Enable RPM Fusion and install codecs + multimedia groups
-enable_multimedia() {
-  log "Enabling RPM Fusion repos..."
-  sudo dnf install -y \
-    https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_VER}.noarch.rpm \
-    https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_VER}.noarch.rpm
+#---------- 1. RPM Fusion ------------------------------------------------------
+msg "Enabling RPM Fusion Free & Non-Free"
+dnf -y install \
+  "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
+  "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" :contentReference[oaicite:0]{index=0}
 
-  log "Swapping ffmpeg-free → full ffmpeg"
-  sudo dnf swap -y ffmpeg-free ffmpeg --allowerasing
+#---------- 2. Flathub ---------------------------------------------------------
+msg "Switching to Flathub"
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo :contentReference[oaicite:1]{index=1}
+if flatpak remote-list | grep -q '^fedora'; then
+  flatpak remote-delete -y fedora :contentReference[oaicite:2]{index=2}
+fi
+flatpak remote-modify --no-filter --enable flathub :contentReference[oaicite:3]{index=3}
 
-  log "Installing additional codecs per RPM Fusion Howto"
-  sudo dnf install -y \
-    libavcodec-freeworld \
-    gstreamer1-plugins-bad-freeworld \
-    gstreamer1-plugins-ugly-freeworld \
-    gstreamer1-plugin-openh264 \
-    lame* \
-    gstreamer1-plugins-{base,good,libav} \
-    ffmpeg-libs || true
+#---------- 3. Core multimedia codecs -----------------------------------------
+msg "Swapping in full FFmpeg and refreshing @multimedia"
+dnf -y swap ffmpeg-free ffmpeg --allowerasing :contentReference[oaicite:4]{index=4}
+dnf -y groupupdate multimedia --setopt=install_weak_deps=False --exclude=PackageKit-gstreamer-plugin :contentReference[oaicite:5]{index=5}
 
-  log "Upgrading multimedia & sound‑and‑video groups"
-  sudo dnf group upgrade -y multimedia --with-optional --setopt="install_weak_deps=False"
-  sudo dnf group upgrade -y sound-and-video
-
-  log "Installing VA‑API libs"
-  sudo dnf install -y libva libva-utils
+#---------- 4. Optional GPU-accelerated codecs --------------------------------
+detect_gpu() {
+  lspci -nnk | awk '/VGA|3D/{print tolower($0); exit}'
 }
 
-# 2. Install VA‑API drivers based on GPU vendor
-install_vaapi_drivers() {
-  GPU=$(lspci | grep -Ei 'VGA|3D' | head -n1 || :)
-  log "Detected GPU: $GPU"
+gpu_line=$(detect_gpu)
+case "$gpu_line" in
+  *intel*)
+      choice="intel"
+      ;;
+  *amd*|*ati*)
+      choice="amd"
+      ;;
+  *)
+      printf "\nHardware not recognised (or NVIDIA/VM). Choose codec set [intel/amd/skip] : "
+      read -r choice
+      ;;
+esac
 
-  if echo "$GPU" | grep -qi intel; then
-    log "Installing Intel VA‑API driver"
-    sudo dnf install -y intel-media-driver libva-intel-driver
-  elif echo "$GPU" | grep -qi amd; then
-    log "Installing AMD freeworld VA‑API drivers"
-    sudo dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld --allowerasing
-    sudo dnf swap -y mesa-vdpau-drivers mesa-vdpau-drivers-freeworld --allowerasing
-    sudo dnf swap -y mesa-va-drivers.i686 mesa-va-drivers-freeworld.i686 --allowerasing
-    sudo dnf swap -y mesa-vdpau-drivers.i686 mesa-vdpau-drivers-freeworld.i686 --allowerasing
-  elif echo "$GPU" | grep -qi nvidia; then
-    log "Installing NVIDIA VA‑API bridge"
-    sudo dnf install -y libva-nvidia-driver
+if [[ "${choice}" == "intel" ]]; then
+  msg "Installing Intel VA-API drivers"
+  if grep -qE 'Gen[56789]|i[3-9]-[6-9]|arc' <<<"$gpu_line"; then
+      # Recent gens
+      dnf -y install intel-media-driver :contentReference[oaicite:6]{index=6}
   else
-    warn "No supported GPU detected — skipping VA‑API drivers."
+      dnf -y install libva-intel-driver :contentReference[oaicite:7]{index=7}
   fi
-}
+elif [[ "${choice}" == "amd" ]]; then
+  msg "Swapping Mesa VA/VDPAU drivers to Freeworld versions"
+  for pkg in mesa-va-drivers mesa-vdpau-drivers; do
+      dnf -y swap "${pkg}" "${pkg}-freeworld" || true
+      # 32-bit compatibility (Steam / Wine) – ignore if not installed
+      dnf -y swap "${pkg}.i686" "${pkg}-freeworld.i686" || true
+  done :contentReference[oaicite:8]{index=8}
+else
+  msg "Skipping GPU-specific codec step."
+fi
 
-# 3. Remove Fedora Flatpak remote/apps, enforce Flathub, install Discover backend
-setup_flatpak() {
-  log "Ensuring Flatpak & Flathub only; removing Fedora flatpak remote/apps…"
-  sudo dnf install -y flatpak
-
-  if flatpak remotes --system | grep -q '^fedora'; then
-    flatpak list --system --app --columns=application,remote | awk '$2=="fedora"{print $1}' | \
-      while read -r app; do
-        log "Removing system Flatpak app from Fedora: $app"
-        sudo flatpak uninstall --system --delete-data -y "$app"
-      done
-    sudo flatpak remote-delete --system fedora
-  fi
-
-  if flatpak remotes --user | grep -q '^fedora'; then
-    flatpak list --user --app --columns=application,remote | awk '$2=="fedora"{print $1}' | \
-      while read -r app; do
-        log "Removing user Flatpak app from Fedora: $app"
-        flatpak uninstall --user --delete-data -y "$app"
-      done
-    flatpak remote-delete --user fedora
-  fi
-
-  if flatpak remotes | grep -q '^flathub'; then
-    sudo flatpak remote-modify --system --no-filter --enable flathub
-    log "Flathub already exists — re-enabled."
-  else
-    log "Adding Flathub remote..."
-    sudo flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-  fi
-
-  sudo mkdir -p /etc/flatpak/remotes.d
-  sudo tee /etc/flatpak/remotes.d/99-disable-fedora.repo >/dev/null <<EOF
-[remote-fedora]
-Name=Blocked Fedora Remote
-Enabled=false
-Url=https://registry.fedoraproject.org/
-EOF
-
-  log "Installing Plasma Discover backend for Flatpak support"
-  sudo dnf install -y plasma-discover-backend-flatpak || warn "Discover backend may not be available."
-}
-
-main() {
-  if [[ "$(id -u)" -ne 0 ]]; then
-    echo "Run as root or use sudo."
-    exit 1
-  fi
-
-  enable_multimedia
-  install_vaapi_drivers
-  setup_flatpak
-
-  echo "✅ Completed setup aligned with RPM Fusion Multimedia Howto :contentReference[oaicite:1]{index=1} and Fedora / Silverblue Flatpak cleanup approach :contentReference[oaicite:2]{index=2}."
-  echo "You may want to reboot for VA‑API activation."
-}
-
-main
+#---------- 5. Finish ----------------------------------------------------------
+msg "All done. Reboot recommended to load any new media drivers."
