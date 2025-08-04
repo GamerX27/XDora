@@ -140,22 +140,22 @@ main() {
     # Detect if the system is running in a VM
     detect_vm
     is_vm=$?
-    
+
     if [[ $is_vm -eq 0 ]]; then
         echo "Skipping hardware-accelerated codec installations since this is a virtual machine."
-    else
-        # Remove Fedora's Flatpaks
-        remove_fedora_flatpaks
-
-        # Add Flathub repository
-        add_flathub_repo
-
-        # Check for Plasma Discover
-        check_plasma_discover
-
-        # Ask user if they want to install proprietary codecs and update multimedia packages
-        ask_for_codecs
     fi
+
+    # Remove Fedora's Flatpaks
+    remove_fedora_flatpaks
+
+    # Add Flathub repository
+    add_flathub_repo
+
+    # Check for Plasma Discover
+    check_plasma_discover
+
+    # Ask user if they want to install proprietary codecs and update multimedia packages
+    ask_for_codecs
 
     # Ask user for Intel iGPU or AMD APU/GPU information
     if [[ $is_vm -eq 1 ]]; then  # Only ask for GPU if it's not a VM
