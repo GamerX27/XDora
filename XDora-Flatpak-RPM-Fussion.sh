@@ -59,29 +59,19 @@ enable_rpmfusion() {
     fi
 }
 
-# Function to switch to full FFmpeg and install multimedia codecs
-switch_to_full_ffmpeg_and_install_codecs() {
+# Function to install multimedia codecs
+install_multimedia_codecs() {
     echo ""
-    echo "Switching to full FFmpeg provided by RPM Fusion..."
-
-    # Swap the free version of FFmpeg with the non-free version and update multimedia packages
-    sudo dnf swap ffmpeg-free ffmpeg --allowerasing
-
-    # Install the multimedia plugins for GStreamer and other multimedia applications
     echo "Installing multimedia codecs and plugins..."
 
-    # Attempt to install the @multimedia group, skip if unavailable
-    sudo dnf update @multimedia --setopt="install_weak_deps=False" --exclude=PackageKit-gstreamer-plugin || {
-        # If the group is unavailable, install individual packages instead
-        echo "The @multimedia group is unavailable. Installing individual multimedia packages..."
-
-        sudo dnf install -y \
-        gstreamer1-plugins-good \
-        gstreamer1-plugins-bad-freeworld \
-        gstreamer1-plugins-ugly-freeworld \
-        ffmpeg \
-        libdvdcss
-    }
+    # Install individual multimedia packages
+    sudo dnf install -y \
+    gstreamer1-plugins-good \
+    gstreamer1-plugins-bad-freeworld \
+    gstreamer1-plugins-ugly-freeworld \
+    gstreamer1-libav \
+    ffmpeg \
+    libdvdcss
 
     echo "Proprietary FFmpeg and multimedia packages have been installed/updated."
 }
@@ -158,8 +148,8 @@ main() {
     # Check for Plasma Discover
     check_plasma_discover
 
-    # Switch to full FFmpeg and install multimedia codecs
-    switch_to_full_ffmpeg_and_install_codecs
+    # Install multimedia codecs
+    install_multimedia_codecs
 
     # Ask user for Intel iGPU or AMD APU/GPU information
     if [[ $is_vm -eq 1 ]]; then  # Only ask for GPU if it's not a VM
