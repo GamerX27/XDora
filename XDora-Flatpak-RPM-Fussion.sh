@@ -134,6 +134,9 @@ detect_vm() {
 
 # Main function
 main() {
+    # First, enable RPM Fusion repositories
+    enable_rpmfusion
+
     # Detect if the system is running in a VM
     detect_vm
     is_vm=$?
@@ -150,15 +153,14 @@ main() {
         # Check for Plasma Discover
         check_plasma_discover
 
-        # Enable RPM Fusion repositories
-        enable_rpmfusion
-
         # Ask user if they want to install proprietary codecs and update multimedia packages
         ask_for_codecs
     fi
 
     # Ask user for Intel iGPU or AMD APU/GPU information
-    ask_for_gpu
+    if [[ $is_vm -eq 1 ]]; then  # Only ask for GPU if it's not a VM
+        ask_for_gpu
+    fi
 
     echo "XDora setup complete!"
 }
