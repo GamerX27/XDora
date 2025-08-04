@@ -12,20 +12,26 @@ fi
 echo "[1/6] Updating base system..."
 dnf5 upgrade -y
 
-echo "[2/6] Installing Minimal KDE Plasma Desktop..."
+echo "[2/6] Installing KDE Plasma Desktop with most features..."
+dnf5 group install -y "KDE Plasma Workspaces"
 dnf5 install -y \
-  plasma-desktop \
   sddm \
   konsole \
   dolphin \
   kwrite \
-  xorg-x11-server-Xorg \
-  plasma-workspace \
+  ark \
+  kfind \
+  kcalc \
+  gwenview \
+  okular \
+  spectacle \
+  filelight \
   kde-connect \
   kde-print-manager \
   plasma-discover \
   breeze-gtk \
-  kde-cli-tools
+  kde-cli-tools \
+  xorg-x11-server-Xorg
 
 echo "[3/6] Enabling graphical target and SDDM..."
 systemctl set-default graphical.target
@@ -47,13 +53,13 @@ EOF
 # Optional: set neutral Plymouth boot splash
 plymouth-set-default-theme -R details
 
-echo "[6/6] Removing unneeded KDE/GUI bloat (but keeping print/connect/discover)..."
+echo "[6/6] Removing unneeded KDE/GUI bloat (preserving common tools)..."
 dnf5 remove -y \
   libreoffice* \
-  akonadi* \
-  kmail* \
-  korganizer* \
-  kontact* \
+  akonadi-import-wizard \
+  kmail \
+  korganizer \
+  kontact \
   calligra* \
   elisa-player \
   dragonplayer \
@@ -65,4 +71,4 @@ dnf5 remove -y \
 dnf5 autoremove -y
 dnf5 clean all
 
-echo "✅ Done! Reboot and enjoy your minimal KDE with KDE Connect, Print, and Discover."
+echo "✅ Done! Reboot and enjoy your KDE environment with most features restored."
