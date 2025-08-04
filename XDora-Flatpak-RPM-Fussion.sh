@@ -8,28 +8,27 @@ else
   SUDO=""
 fi
 
-echo "🔧 Starting Fedora Desktop Setup…"
+echo "🔧 Starting Fedora Desktop Setup..."
 
 ###############################################################################
-# 1. Flatpak – Flathub remote setup
+# 1. Flatpak – Flathub setup
 ###############################################################################
-echo "📦 Configuring Flatpak…"
+echo "📦 Configuring Flatpak..."
 if ! command -v flatpak &>/dev/null; then
-  echo "❌ Flatpak not found. Install Flatpak and re-run." >&2
+  echo "❌ Flatpak not found. Install it and re-run this script." >&2
   exit 1
 fi
 
-flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-
+$SUDO flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 if flatpak remotes --columns=name | grep -qx "fedora"; then
-  flatpak remote-delete fedora
+  $SUDO flatpak remote-delete fedora
 fi
 echo "✅ Flatpak configured."
 
 ###############################################################################
-# 2. RPM Fusion – Free & Non-Free repos
+# 2. RPM Fusion – Free & Non-Free
 ###############################################################################
-echo "📦 Configuring RPM Fusion…"
+echo "📦 Configuring RPM Fusion..."
 FEDORA_REL=$(rpm -E %fedora)
 
 if ! dnf repolist --all | grep -qE '^rpmfusion-.*free'; then
@@ -43,7 +42,7 @@ fi
 ###############################################################################
 # 3. Cisco OpenH264 – Codec Repo
 ###############################################################################
-echo "🎞️ Enabling Cisco OpenH264 repo…"
+echo "🎞️ Enabling Cisco OpenH264 repo..."
 if dnf repolist --all | grep -qE '^fedora-cisco-openh264'; then
   if ! dnf repolist | grep -qE '^fedora-cisco-openh264'; then
     $SUDO dnf config-manager --set-enabled fedora-cisco-openh264
@@ -55,28 +54,32 @@ fi
 ###############################################################################
 # 4. System Update – @core and full update
 ###############################################################################
-echo "🔄 Updating system core packages…"
+echo "🔄 Updating system core packages..."
 $SUDO dnf -y update @core
 $SUDO dnf -y update --refresh
 
 ###############################################################################
-# 5. Multimedia Enhancements – group install + update
+# 5. Multimedia Enhancements – manual install
 ###############################################################################
-echo "🎧 Installing multimedia group and codecs…"
+echo "🎧 Installing multimedia codecs manually..."
 
-if dnf group info multimedia &>/dev/null; then
-  $SUDO dnf -y group install "Multimedia" \
-    --setopt=install_weak_deps=False \
-    --exclude=PackageKit-gstreamer-plugin
+$SUDO dnf -y install \
+  ffmpeg \
+  gstreamer1-plugins-good \
+  gstreamer1-plugins-bad-free \
+  gstreamer1-plugins-ugly \
+  gstreamer1-plugins-base \
+  gstreamer1-libav \
+  lame \
+  x264 \
+  x265 \
+  libheif-freeworld \
+  pipewire-codec-aptx \
+  libva-utils \
+  vdpauinfo \
+  vainfo
 
-  $SUDO dnf -y update @multimedia \
-    --setopt=install_weak_deps=False \
-    --exclude=PackageKit-gstreamer-plugin
-else
-  echo "⚠️  @multimedia group not available — skipping multimedia install/update."
-fi
-
-echo "🎞️ Swapping ffmpeg-free → full ffmpeg…"
+echo "🎞️ Swapping ffmpeg-free → full ffmpeg..."
 $SUDO dnf -y swap ffmpeg-free ffmpeg --allowerasing
 
 ###############################################################################
@@ -109,7 +112,7 @@ case "$GPU_CHOICE" in
     esac
     ;;
   2)
-    echo "AMD GPU selected. Installing Freeworld drivers…"
+    echo "AMD GPU selected. Installing Freeworld drivers..."
     $SUDO dnf -y swap mesa-va-drivers mesa-va-drivers-freeworld
     $SUDO dnf -y swap mesa-vdpau-drivers mesa-vdpau-drivers-freeworld
     $SUDO dnf -y swap mesa-va-drivers.i686 mesa-va-drivers-freeworld.i686
@@ -127,3 +130,6 @@ esac
 ###############################################################################
 # Done
 ###############################################################################
+echo
+echo "✅ Fedora Desktop setup complete!"
+echo "You may want to reboot for all changes to apply."
