@@ -2,7 +2,6 @@
 
 set -euo pipefail
 
-### Sudo wrapper
 if [[ $EUID -ne 0 ]]; then
   SUDO="sudo"
 else
@@ -15,19 +14,20 @@ echo "🔧 Starting Fedora Desktop Setup…"
 # 1. Flatpak – Flathub remote setup
 ###############################################################################
 echo "📦 Configuring Flatpak…"
-if ! command -v flatpak >/dev/null 2>&1; then
-  echo "❌ Flatpak not found. Install Flatpak and re-run this script." >&2
+if ! command -v flatpak &>/dev/null; then
+  echo "❌ Flatpak not found. Install Flatpak and re-run." >&2
   exit 1
 fi
 
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
 if flatpak remotes --columns=name | grep -qx "fedora"; then
   flatpak remote-delete fedora
 fi
 echo "✅ Flatpak configured."
 
 ###############################################################################
-# 2. RPM Fusion – Repositories
+# 2. RPM Fusion – Free & Non-Free repos
 ###############################################################################
 echo "📦 Configuring RPM Fusion…"
 FEDORA_REL=$(rpm -E %fedora)
@@ -37,7 +37,7 @@ if ! dnf repolist --all | grep -qE '^rpmfusion-.*free'; then
     "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_REL}.noarch.rpm" \
     "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_REL}.noarch.rpm"
 else
-  echo "✅ RPM Fusion already configured."
+  echo "✅ RPM Fusion already enabled."
 fi
 
 ###############################################################################
@@ -49,40 +49,51 @@ if dnf repolist --all | grep -qE '^fedora-cisco-openh264'; then
     $SUDO dnf config-manager --set-enabled fedora-cisco-openh264
   fi
 else
-  echo "⚠️ Warning: 'fedora-cisco-openh264' repo not found in configuration."
+  echo "⚠️ Warning: 'fedora-cisco-openh264' repo not found."
 fi
 
 ###############################################################################
-# 4. System Update – @core and full system
+# 4. System Update – @core and full update
 ###############################################################################
-echo "🔄 Updating core packages and system…"
+echo "🔄 Updating system core packages…"
 $SUDO dnf -y update @core
 $SUDO dnf -y update --refresh
 
 ###############################################################################
-# 5. Multimedia Enhancements – ffmpeg, @multimedia
+# 5. Multimedia Enhancements – group install + update
 ###############################################################################
-echo "🎧 Installing full ffmpeg and updating multimedia stack…"
+echo "🎧 Installing multimedia group and codecs…"
+
+if dnf group info multimedia &>/dev/null; then
+  $SUDO dnf -y group install "Multimedia" \
+    --setopt=install_weak_deps=False \
+    --exclude=PackageKit-gstreamer-plugin
+
+  $SUDO dnf -y update @multimedia \
+    --setopt=install_weak_deps=False \
+    --exclude=PackageKit-gstreamer-plugin
+else
+  echo "⚠️  @multimedia group not available — skipping multimedia install/update."
+fi
+
+echo "🎞️ Swapping ffmpeg-free → full ffmpeg…"
 $SUDO dnf -y swap ffmpeg-free ffmpeg --allowerasing
-$SUDO dnf -y update @multimedia \
-  --setopt=install_weak_deps=False \
-  --exclude=PackageKit-gstreamer-plugin
 
 ###############################################################################
-# 6. Hardware Accelerated Codec Setup – Intel / AMD / Skip
+# 6. Hardware Acceleration – Intel / AMD / Skip
 ###############################################################################
 echo
-echo "🖥️ Hardware Acceleration Setup:"
+echo "🖥️ GPU Acceleration Setup:"
 echo "  1) Intel GPU"
 echo "  2) AMD GPU"
-echo "  3) Skip (VM or unsupported system)"
+echo "  3) Skip (for VM/headless)"
 read -rp "Select your GPU type (1/2/3): " GPU_CHOICE
 
 case "$GPU_CHOICE" in
   1)
     echo "Intel GPU selected."
-    echo "  a) New Intel GPU (Broadwell+, Skylake, Tiger Lake, etc.)"
-    echo "  b) Old Intel GPU (Ivy Bridge, Haswell, etc.)"
+    echo "  a) New Intel GPU (Broadwell+, Gen8+, e.g. Skylake, Tiger Lake)"
+    echo "  b) Old Intel GPU (Ivy Bridge, Haswell)"
     read -rp "Select Intel driver type (a/b): " INTEL_TYPE
 
     case "$INTEL_TYPE" in
@@ -93,12 +104,12 @@ case "$GPU_CHOICE" in
         $SUDO dnf -y install libva-intel-driver libva-utils vainfo
         ;;
       *)
-        echo "Invalid Intel driver choice. Skipping Intel install."
+        echo "Invalid Intel driver choice. Skipping."
         ;;
     esac
     ;;
   2)
-    echo "AMD GPU selected. Swapping Mesa VAAPI/VDPAU drivers with Freeworld…"
+    echo "AMD GPU selected. Installing Freeworld drivers…"
     $SUDO dnf -y swap mesa-va-drivers mesa-va-drivers-freeworld
     $SUDO dnf -y swap mesa-vdpau-drivers mesa-vdpau-drivers-freeworld
     $SUDO dnf -y swap mesa-va-drivers.i686 mesa-va-drivers-freeworld.i686
@@ -106,21 +117,13 @@ case "$GPU_CHOICE" in
     $SUDO dnf -y install libva-utils vdpauinfo vainfo
     ;;
   3)
-    echo "Skipping hardware acceleration setup."
+    echo "Skipping GPU hardware acceleration setup."
     ;;
   *)
-    echo "Invalid selection. Skipping GPU driver setup."
+    echo "Invalid selection. Skipping GPU driver install."
     ;;
 esac
 
 ###############################################################################
 # Done
 ###############################################################################
-echo
-echo "🎉 Fedora Desktop setup complete!"
-echo "  ✔️ Flathub added"
-echo "  ✔️ RPM Fusion enabled"
-echo "  ✔️ Cisco H.264 repo enabled"
-echo "  ✔️ System updated"
-echo "  ✔️ Multimedia stack ready"
-echo "  ✔️ GPU drivers configured (if selected)"
