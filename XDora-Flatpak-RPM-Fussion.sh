@@ -59,27 +59,31 @@ enable_rpmfusion() {
     fi
 }
 
-# Function to ask the user about adding proprietary codecs
-ask_for_codecs() {
+# Function to switch to full FFmpeg and install multimedia codecs
+switch_to_full_ffmpeg_and_install_codecs() {
     echo ""
-    echo "Warning: The following actions involve proprietary software (e.g., FFmpeg) and may have licensing implications depending on your jurisdiction."
-    echo "Do you want to proceed with enabling proprietary codecs and multimedia updates?"
-    echo ""
-    read -p "Proceed with multimedia update and FFmpeg swap? (y/n): " install_codecs
+    echo "Switching to full FFmpeg provided by RPM Fusion..."
 
-    if [[ "$install_codecs" == "y" || "$install_codecs" == "Y" ]]; then
-        echo "Swapping FFmpeg and updating multimedia packages..."
+    # Swap the free version of FFmpeg with the non-free version and update multimedia packages
+    sudo dnf swap ffmpeg-free ffmpeg --allowerasing
 
-        # Swap the free version of FFmpeg with the non-free version and update multimedia packages
-        sudo dnf swap ffmpeg-free ffmpeg --allowerasing
+    # Install the multimedia plugins for GStreamer and other multimedia applications
+    echo "Installing multimedia codecs and plugins..."
 
-        # Update multimedia packages, excluding the PackageKit-gstreamer-plugin
-        sudo dnf update @multimedia --setopt="install_weak_deps=False" --exclude=PackageKit-gstreamer-plugin
-        
-        echo "Proprietary FFmpeg and multimedia packages have been installed/updated."
-    else
-        echo "Skipping installation of proprietary codecs and multimedia update."
-    fi
+    # Attempt to install the @multimedia group, skip if unavailable
+    sudo dnf update @multimedia --setopt="install_weak_deps=False" --exclude=PackageKit-gstreamer-plugin || {
+        # If the group is unavailable, install individual packages instead
+        echo "The @multimedia group is unavailable. Installing individual multimedia packages..."
+
+        sudo dnf install -y \
+        gstreamer1-plugins-good \
+        gstreamer1-plugins-bad-freeworld \
+        gstreamer1-plugins-ugly-freeworld \
+        ffmpeg \
+        libdvdcss
+    }
+
+    echo "Proprietary FFmpeg and multimedia packages have been installed/updated."
 }
 
 # Function to check if the user has an Intel iGPU or AMD APU/GPU
@@ -154,8 +158,8 @@ main() {
     # Check for Plasma Discover
     check_plasma_discover
 
-    # Ask user if they want to install proprietary codecs and update multimedia packages
-    ask_for_codecs
+    # Switch to full FFmpeg and install multimedia codecs
+    switch_to_full_ffmpeg_and_install_codecs
 
     # Ask user for Intel iGPU or AMD APU/GPU information
     if [[ $is_vm -eq 1 ]]; then  # Only ask for GPU if it's not a VM
