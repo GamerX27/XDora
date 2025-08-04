@@ -13,7 +13,31 @@ echo "[1/6] Updating base system..."
 dnf5 upgrade -y
 
 echo "[2/6] Installing KDE Plasma Desktop with most features..."
-dnf5 group install -y "KDE Plasma Desktop"
+dnf5 install -y \
+  plasma-desktop \
+  plasma-workspace \
+  plasma-nm \
+  plasma-pa \
+  kde-gtk-config \
+  systemsettings \
+  kinfocenter \
+  sddm \
+  konsole \
+  dolphin \
+  kwrite \
+  ark \
+  kfind \
+  kcalc \
+  gwenview \
+  okular \
+  spectacle \
+  filelight \
+  kde-connect \
+  kde-print-manager \
+  plasma-discover \
+  breeze-gtk \
+  kde-cli-tools \
+  xorg-x11-server-Xorg
 dnf5 install -y \
   sddm \
   konsole \
