@@ -1,71 +1,126 @@
 #!/usr/bin/env bash
+
 set -euo pipefail
 
-#---------- helpers -----------------------------------------------------------
-msg() { printf '\e[1;32m==>\e[0m %s\n' "$*"; }
-die() { printf '\e[1;31m!!\e[0m %s\n' "$*" ; exit 1; }
-
-need_cmd() { command -v "$1" &>/dev/null || die "Required cmd '$1' not found."; }
-need_cmd dnf
-need_cmd flatpak
-need_cmd lspci
-
-#---------- 1. RPM Fusion ------------------------------------------------------
-msg "Enabling RPM Fusion Free & Non-Free"
-dnf -y install \
-  "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
-  "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" :contentReference[oaicite:0]{index=0}
-
-#---------- 2. Flathub ---------------------------------------------------------
-msg "Switching to Flathub"
-flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo :contentReference[oaicite:1]{index=1}
-if flatpak remote-list | grep -q '^fedora'; then
-  flatpak remote-delete -y fedora :contentReference[oaicite:2]{index=2}
+### Sudo wrapper
+if [[ $EUID -ne 0 ]]; then
+  SUDO="sudo"
+else
+  SUDO=""
 fi
-flatpak remote-modify --no-filter --enable flathub :contentReference[oaicite:3]{index=3}
 
-#---------- 3. Core multimedia codecs -----------------------------------------
-msg "Swapping in full FFmpeg and refreshing @multimedia"
-dnf -y swap ffmpeg-free ffmpeg --allowerasing :contentReference[oaicite:4]{index=4}
-dnf -y groupupdate multimedia --setopt=install_weak_deps=False --exclude=PackageKit-gstreamer-plugin :contentReference[oaicite:5]{index=5}
+echo "🔧 Starting Fedora Desktop Setup…"
 
-#---------- 4. Optional GPU-accelerated codecs --------------------------------
-detect_gpu() {
-  lspci -nnk | awk '/VGA|3D/{print tolower($0); exit}'
-}
+###############################################################################
+# 1. Flatpak – Flathub remote setup
+###############################################################################
+echo "📦 Configuring Flatpak…"
+if ! command -v flatpak >/dev/null 2>&1; then
+  echo "❌ Flatpak not found. Install Flatpak and re-run this script." >&2
+  exit 1
+fi
 
-gpu_line=$(detect_gpu)
-case "$gpu_line" in
-  *intel*)
-      choice="intel"
-      ;;
-  *amd*|*ati*)
-      choice="amd"
-      ;;
+flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+if flatpak remotes --columns=name | grep -qx "fedora"; then
+  flatpak remote-delete fedora
+fi
+echo "✅ Flatpak configured."
+
+###############################################################################
+# 2. RPM Fusion – Repositories
+###############################################################################
+echo "📦 Configuring RPM Fusion…"
+FEDORA_REL=$(rpm -E %fedora)
+
+if ! dnf repolist --all | grep -qE '^rpmfusion-.*free'; then
+  $SUDO dnf -y install \
+    "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA_REL}.noarch.rpm" \
+    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA_REL}.noarch.rpm"
+else
+  echo "✅ RPM Fusion already configured."
+fi
+
+###############################################################################
+# 3. Cisco OpenH264 – Codec Repo
+###############################################################################
+echo "🎞️ Enabling Cisco OpenH264 repo…"
+if dnf repolist --all | grep -qE '^fedora-cisco-openh264'; then
+  if ! dnf repolist | grep -qE '^fedora-cisco-openh264'; then
+    $SUDO dnf config-manager --set-enabled fedora-cisco-openh264
+  fi
+else
+  echo "⚠️ Warning: 'fedora-cisco-openh264' repo not found in configuration."
+fi
+
+###############################################################################
+# 4. System Update – @core and full system
+###############################################################################
+echo "🔄 Updating core packages and system…"
+$SUDO dnf -y update @core
+$SUDO dnf -y update --refresh
+
+###############################################################################
+# 5. Multimedia Enhancements – ffmpeg, @multimedia
+###############################################################################
+echo "🎧 Installing full ffmpeg and updating multimedia stack…"
+$SUDO dnf -y swap ffmpeg-free ffmpeg --allowerasing
+$SUDO dnf -y update @multimedia \
+  --setopt=install_weak_deps=False \
+  --exclude=PackageKit-gstreamer-plugin
+
+###############################################################################
+# 6. Hardware Accelerated Codec Setup – Intel / AMD / Skip
+###############################################################################
+echo
+echo "🖥️ Hardware Acceleration Setup:"
+echo "  1) Intel GPU"
+echo "  2) AMD GPU"
+echo "  3) Skip (VM or unsupported system)"
+read -rp "Select your GPU type (1/2/3): " GPU_CHOICE
+
+case "$GPU_CHOICE" in
+  1)
+    echo "Intel GPU selected."
+    echo "  a) New Intel GPU (Broadwell+, Skylake, Tiger Lake, etc.)"
+    echo "  b) Old Intel GPU (Ivy Bridge, Haswell, etc.)"
+    read -rp "Select Intel driver type (a/b): " INTEL_TYPE
+
+    case "$INTEL_TYPE" in
+      a|A)
+        $SUDO dnf -y install intel-media-driver libva-utils vainfo
+        ;;
+      b|B)
+        $SUDO dnf -y install libva-intel-driver libva-utils vainfo
+        ;;
+      *)
+        echo "Invalid Intel driver choice. Skipping Intel install."
+        ;;
+    esac
+    ;;
+  2)
+    echo "AMD GPU selected. Swapping Mesa VAAPI/VDPAU drivers with Freeworld…"
+    $SUDO dnf -y swap mesa-va-drivers mesa-va-drivers-freeworld
+    $SUDO dnf -y swap mesa-vdpau-drivers mesa-vdpau-drivers-freeworld
+    $SUDO dnf -y swap mesa-va-drivers.i686 mesa-va-drivers-freeworld.i686
+    $SUDO dnf -y swap mesa-vdpau-drivers.i686 mesa-vdpau-drivers-freeworld.i686
+    $SUDO dnf -y install libva-utils vdpauinfo vainfo
+    ;;
+  3)
+    echo "Skipping hardware acceleration setup."
+    ;;
   *)
-      printf "\nHardware not recognised (or NVIDIA/VM). Choose codec set [intel/amd/skip] : "
-      read -r choice
-      ;;
+    echo "Invalid selection. Skipping GPU driver setup."
+    ;;
 esac
 
-if [[ "${choice}" == "intel" ]]; then
-  msg "Installing Intel VA-API drivers"
-  if grep -qE 'Gen[56789]|i[3-9]-[6-9]|arc' <<<"$gpu_line"; then
-      # Recent gens
-      dnf -y install intel-media-driver :contentReference[oaicite:6]{index=6}
-  else
-      dnf -y install libva-intel-driver :contentReference[oaicite:7]{index=7}
-  fi
-elif [[ "${choice}" == "amd" ]]; then
-  msg "Swapping Mesa VA/VDPAU drivers to Freeworld versions"
-  for pkg in mesa-va-drivers mesa-vdpau-drivers; do
-      dnf -y swap "${pkg}" "${pkg}-freeworld" || true
-      # 32-bit compatibility (Steam / Wine) – ignore if not installed
-      dnf -y swap "${pkg}.i686" "${pkg}-freeworld.i686" || true
-  done :contentReference[oaicite:8]{index=8}
-else
-  msg "Skipping GPU-specific codec step."
-fi
-
-#---------- 5. Finish ----------------------------------------------------------
-msg "All done. Reboot recommended to load any new media drivers."
+###############################################################################
+# Done
+###############################################################################
+echo
+echo "🎉 Fedora Desktop setup complete!"
+echo "  ✔️ Flathub added"
+echo "  ✔️ RPM Fusion enabled"
+echo "  ✔️ Cisco H.264 repo enabled"
+echo "  ✔️ System updated"
+echo "  ✔️ Multimedia stack ready"
+echo "  ✔️ GPU drivers configured (if selected)"
