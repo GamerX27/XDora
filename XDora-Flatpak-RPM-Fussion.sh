@@ -26,7 +26,7 @@ fi
 echo "✅ Flatpak configured."
 
 ###############################################################################
-# 2. RPM Fusion – Free & Non-Free, Fully Enabled
+# 2. RPM Fusion – Free & Non-Free, Fully Enabled (DNF5-safe)
 ###############################################################################
 echo "📦 Setting up RPM Fusion..."
 
@@ -50,7 +50,7 @@ ENABLED_REPOS=(
 for repo in "${ENABLED_REPOS[@]}"; do
   if ! dnf repolist enabled | grep -q "^$repo"; then
     echo "✅ Enabling $repo..."
-    $SUDO dnf config-manager --set-enabled "$repo"
+    $SUDO dnf config-manager enable "$repo"
   else
     echo "✔️  $repo already enabled"
   fi
@@ -59,7 +59,7 @@ done
 echo "✅ RPM Fusion fully configured."
 
 ###############################################################################
-# 3. Multimedia Enhancements – try group first, fallback to manual
+# 3. Multimedia Enhancements – try group, fallback to manual
 ###############################################################################
 echo "🎧 Installing multimedia stack..."
 
@@ -115,7 +115,7 @@ $SUDO dnf -y swap ffmpeg-free ffmpeg --allowerasing || echo "ℹ️ Swap skipped
 echo "🎞️ Enabling Cisco OpenH264 repo..."
 if dnf repolist --all | grep -qE '^fedora-cisco-openh264'; then
   if ! dnf repolist | grep -qE '^fedora-cisco-openh264'; then
-    $SUDO dnf config-manager --set-enabled fedora-cisco-openh264
+    $SUDO dnf config-manager enable fedora-cisco-openh264
   fi
 else
   echo "⚠️ Warning: 'fedora-cisco-openh264' repo not found."
