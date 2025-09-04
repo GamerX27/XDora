@@ -41,7 +41,8 @@ else
     plasma-discover \
     breeze-gtk \
     kde-cli-tools \
-    xorg-x11-server-Xorg
+    xorg-x11-server-Xorg \
+    papirus-icon-theme
 fi
 
 echo "[3/6] Enabling graphical target and SDDM..."
